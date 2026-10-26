@@ -73,12 +73,13 @@ CORS(app, resources={r"/api/*": {"origins": [
 MODEL_DIR = "./model"
 
 regression_pipeline = joblib.load(
-    os.path.join(MODEL_DIR, "lasso_regressor_for_sme_revenue.joblib")
+    os.path.join(MODEL_DIR, "lasso_regressor_for_farm_income.joblib")
 )
 
 classification_pipeline = joblib.load(
-    os.path.join(MODEL_DIR, "svc_classifier_for_sme_credit_risk.joblib")
+    os.path.join(MODEL_DIR, "logisticregression_classifier_for_invoice_payment_risk.joblib")
 )
+
 
 clustering_artifact = joblib.load(
     os.path.join(MODEL_DIR, "kmeans_farmer_segmentation.joblib")
@@ -96,97 +97,131 @@ ITEM_NAME_TO_ID = {str(name).lower(): item_id for item_id, name in item_lookup["
 
 print("All the four artifacts have been loaded. The API is ready.")
 
+# ---------------------------- COPY TO HERE ----------------------------------
 
-# 1. REGRESSION -- predict monthly revenue (KES) for an SME
+
+import math
+
+import numpy as np
+
+REG_NUMERIC = ["years_farming_experience", "soil_quality_score", "num_workers_employed",
+               "market_distance_km", "rainfall_mm"]
+REG_NUMERIC_OPTIONAL = ["irrigation_maintenance_cost_kes"]   # leave out when the farm has no irrigation
+REG_CATEGORICAL = ["crop_type", "county", "cooperative_member"]
+REG_CATEGORICAL_OPTIONAL = ["irrigation_type"]               # leave out when the farm has no irrigation
+
+CLF_NUMERIC = ["payment_terms_days", "invoice_amount_kes", "client_relationship_years",
+               "prior_late_payments_count", "discount_offered_pct",
+               "days_outstanding_avg_historical", "economic_sector_growth_rate_pct"]
+CLF_NUMERIC_OPTIONAL = ["guarantee_value_kes"]               # leave out for an unsecured invoice
+CLF_CATEGORICAL = ["client_industry", "payment_method", "has_dispute_history",
+                   "collateral_or_guarantee", "client_credit_rating", "client_company_size"]
+# The classifier's encoder has fixed categories, so these two are checked first.
+CLF_ALLOWED = {
+    "client_credit_rating": ["Poor", "Fair", "Good", "Excellent"],
+    "client_company_size": ["Small", "Medium", "Large", "Enterprise"],
+}
+
+
+def _as_number(payload, field, required=True):
+    value = payload.get(field)
+    if value is None or value == "":
+        if required:
+            raise ValueError(f"Missing required field: '{field}'.")
+        return float("nan")
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"'{field}' must be a number, got {value!r}.")
+    if not math.isfinite(number):
+        raise ValueError(f"'{field}' must be a finite number.")
+    return number
+
+
+def _as_text(payload, field, required=True):
+    value = payload.get(field)
+    if value is None or str(value).strip() == "":
+        if required:
+            raise ValueError(f"Missing required field: '{field}'.")
+        return float("nan")
+    return str(value).strip()
+
+
+def _build_row(payload, numeric, numeric_optional, categorical, categorical_optional):
+    if not isinstance(payload, dict):
+        raise ValueError("Send a JSON object with Content-Type: application/json.")
+    row = {f: _as_number(payload, f) for f in numeric}
+    row.update({f: _as_number(payload, f, required=False) for f in numeric_optional})
+    row.update({f: _as_text(payload, f) for f in categorical})
+    row.update({f: _as_text(payload, f, required=False) for f in categorical_optional})
+    return pd.DataFrame([row])
+
 
 # Sample request (cURL):
-#   curl -X POST http://127.0.0.1:5000/api/v1/models/sme-revenue-regressor/predictions \
+#   curl -X POST http://127.0.0.1:5000/api/v1/models/farm-income-regressor/predictions \
 #        -H "Content-Type: application/json" \
-#        -d '{"sector": "Technology", "county": "Nairobi", "quarter": "Q3",
-#             "business_age_years": 4.5, "num_employees": 12,
-#             "owner_education_level": "Secondary",
-#             "monthly_marketing_spend_kes": 45000,
-#             "avg_daily_foot_traffic": null,
-#             "online_presence_score": 78.0, "loan_amount_kes": 250000,
-#             "interest_rate_pct": 14.5, "inflation_rate_pct": 6.5,
-#             "competitor_density": 5, "customer_satisfaction_score": 4.2}'
+#        -d '{"years_farming_experience": 15, "soil_quality_score": 7,
+#             "num_workers_employed": 6, "market_distance_km": 12,
+#             "rainfall_mm": 900, "crop_type": "Tea", "county": "Kericho",
+#             "cooperative_member": "Yes"}'
 #
-# Sample request (PowerShell):
-#   Invoke-RestMethod -Method Post `
-#     -Uri "http://127.0.0.1:5000/api/v1/models/sme-revenue-regressor/predictions" `
-#     -ContentType "application/json" `
-#     -Body (@{sector="Technology"; county="Nairobi"; quarter="Q3";
-#              business_age_years=4.5; num_employees=12;
-#              owner_education_level="Secondary";
-#              monthly_marketing_spend_kes=45000; avg_daily_foot_traffic=$null;
-#              online_presence_score=78.0; loan_amount_kes=250000;
-#              interest_rate_pct=14.5; inflation_rate_pct=6.5;
-#              competitor_density=5; customer_satisfaction_score=4.2} | ConvertTo-Json)
-#
-# Note: avg_daily_foot_traffic is deliberately null for a Technology-sector
-# business (fully online -- foot traffic is structurally not applicable, not
-# missing at random). The pipeline's own imputer handles the null value; nothing
-# in this file needs to know that rule.
-@app.route("/api/v1/models/sme-revenue-regressor/predictions", methods=["POST"])
-def predict_revenue():
-    payload = request.get_json()
+# Note: the pipeline was trained on log1p(income), so np.expm1 turns the
+# prediction back into KES. irrigation_type and irrigation_maintenance_cost_kes
+# are left out on purpose for a farm with no irrigation; the pipeline's own
+# imputer handles the gap.
+@app.route("/api/v1/models/farm-income-regressor/predictions", methods=["POST"])
+def predict_farm_income():
+    try:
+        input_row = _build_row(request.get_json(silent=True), REG_NUMERIC,
+                               REG_NUMERIC_OPTIONAL, REG_CATEGORICAL,
+                               REG_CATEGORICAL_OPTIONAL)
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
-    # Build a one-row DataFrame straight from the JSON body. No manual
-    # label-encoding, no manual date parsing, no manual column reordering, etc. --
-    # the pipeline's ColumnTransformer already knows which columns it expects
-    # and how to preprocess each one.
-    input_row = pd.DataFrame([payload])
-
-    predicted_log_revenue = regression_pipeline.predict(input_row)[0]
-    # The pipeline was trained on log1p(revenue) because revenue was
-    # right-skewed; we invert that single transformation here to report the
-    # predictions in KES.
-    import numpy as np
-    predicted_revenue_kes = float(np.expm1(predicted_log_revenue))
-
+    predicted_log_income = regression_pipeline.predict(input_row)[0]
     return jsonify({
-        "predicted_monthly_revenue_kes": round(predicted_revenue_kes, 2),
+        "predicted_annual_farm_income_kes": round(float(np.expm1(predicted_log_income)), 2),
         "model": "Lasso Regressor",
     })
 
 
-# 2. CLASSIFICATION -- predict SME credit risk category (Low/Medium/High)
-
 # Sample request (cURL):
-#   curl -X POST http://127.0.0.1:5000/api/v1/models/sme-credit-risk-classifier/predictions \
+#   curl -X POST http://127.0.0.1:5000/api/v1/models/invoice-risk-classifier/predictions \
 #        -H "Content-Type: application/json" \
-#        -d '{"sector": "Retail", "county": "Nairobi", "quarter": "Q2",
-#             "loan_purpose": "Working Capital", "owner_education_level": "Secondary",
-#             "business_age_years": 2.1, "num_employees": 4,
-#             "monthly_revenue_kes": 850000, "loan_amount_kes": 150000,
-#             "loan_term_months": 12, "interest_rate_pct": 16.5,
-#             "collateral_value_kes": null, "debt_to_income_ratio": 0.62,
-#             "credit_score": 590, "num_previous_loans": 1,
-#             "missed_payments_count": 3, "online_presence_score": 40.0,
-#             "customer_satisfaction_score": 3.4, "competitor_density": 6}'
-#
-#
-# Note: collateral_value_kes is null here because "Working Capital" loans are
-# more often unsecured (structural missingness, not missing at random) --
-# again, the pipeline's imputer + missingness indicator already handles this
-# internally; this route does not need special code for it.
-@app.route("/api/v1/models/sme-credit-risk-classifier/predictions", methods=["POST"])
-def predict_credit_risk():
-    payload = request.get_json()
-    input_row = pd.DataFrame([payload])
+#        -d '{"client_industry": "Technology", "client_credit_rating": "Excellent",
+#             "client_company_size": "Enterprise", "payment_method": "Bank Transfer",
+#             "has_dispute_history": "No", "collateral_or_guarantee": "Yes",
+#             "payment_terms_days": 15, "invoice_amount_kes": 400000,
+#             "client_relationship_years": 8, "prior_late_payments_count": 0,
+#             "discount_offered_pct": 2.0, "days_outstanding_avg_historical": 12,
+#             "guarantee_value_kes": 450000, "economic_sector_growth_rate_pct": 4.5}'
+@app.route("/api/v1/models/invoice-risk-classifier/predictions", methods=["POST"])
+def predict_invoice_risk():
+    payload = request.get_json(silent=True)
+    try:
+        if isinstance(payload, dict):
+            for field, allowed in CLF_ALLOWED.items():
+                value = _as_text(payload, field)
+                if value not in allowed:
+                    raise ValueError(f"'{field}' must be one of {allowed}, got {value!r}.")
+        input_row = _build_row(payload, CLF_NUMERIC, CLF_NUMERIC_OPTIONAL,
+                               CLF_CATEGORICAL, [])
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
     predicted_class = classification_pipeline.predict(input_row)[0]
     predicted_probabilities = classification_pipeline.predict_proba(input_row)[0]
     class_labels = classification_pipeline.named_steps["model"].classes_
 
     return jsonify({
-        "predicted_credit_risk_category": str(predicted_class),
+        "predicted_risk_category": str(predicted_class),
         "class_probabilities": {
             str(label): round(float(prob), 4)
             for label, prob in zip(class_labels, predicted_probabilities)
         },
-        "model": "Support Vector Classifier (tuned, SMOTE-resampled at training only)",
+        "model": "Logistic Regression (SMOTE applied at training only)",
     })
+
 
 
 # 3. CLUSTERING -- assign a new farmer to an existing segment (k = 5)
