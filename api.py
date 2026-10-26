@@ -81,10 +81,11 @@ classification_pipeline = joblib.load(
 )
 
 clustering_artifact = joblib.load(
-    os.path.join(MODEL_DIR, "kmeans_mall_customer_segmentation.joblib")
+    os.path.join(MODEL_DIR, "kmeans_farmer_segmentation.joblib")
 )
 clustering_scaler = clustering_artifact["scaler"]
 clustering_kmeans = clustering_artifact["kmeans"]
+clustering_feature_cols = clustering_artifact["feature_cols"]
 
 arm_artifact = joblib.load(
     os.path.join(MODEL_DIR, "apriori_recommendation_rules.joblib")
@@ -187,23 +188,60 @@ def predict_credit_risk():
     })
 
 
-# 3. CLUSTERING -- assign a new mall customer to an existing segment
-
-# Sample request (cURL):
-#   curl -X POST http://127.0.0.1:5000/api/v1/models/mall-customer-segmenter/predictions \
-#        -H "Content-Type: application/json" \
-#        -d '{"Age": 27, "Annual Income (k$)": 45, "Spending Score (1-100)": 72}'
+# 3. CLUSTERING -- assign a new farmer to an existing segment (k = 5)
 #
-# Note: unlike the two Pipelines above, K-Means does not bundle its own
-# scaler, so this is the one endpoint where the scaling step is applied
-# explicitly (scaler.transform(...) then kmeans.predict(...)) -- exactly the
-# two-object pattern the clustering notebook persisted together for this
-# reason. There is still no manual encoding or feature engineering: the
-# three numeric fields are used exactly as the client sends them.
-@app.route("/api/v1/models/mall-customer-segmenter/predictions", methods=["POST"])
-def predict_customer_segment():
-    payload = request.get_json()
-    input_row = pd.DataFrame([payload])
+# Sample request (cURL):
+#   curl -X POST http://127.0.0.1:5000/api/v1/models/farmer-segmenter/predictions \
+#        -H "Content-Type: application/json" \
+#        -d '{"farm_size_acres": 1.5, "annual_yield_tonnes": 16,
+#             "income_per_acre_kes": 52000, "years_farming_experience": 6,
+#             "market_access_score": 70}'
+#
+# Note: K-Means does not bundle its own scaler or feature engineering, so this
+# route repeats the notebook's steps in the same order: yield per acre, log1p
+# on the skewed columns, scaler.transform, then kmeans.predict. Nothing is
+# fitted here.
+CLUSTER_INPUTS = ["farm_size_acres", "annual_yield_tonnes", "income_per_acre_kes",
+                  "years_farming_experience", "market_access_score"]
+
+
+@app.route("/api/v1/models/farmer-segmenter/predictions", methods=["POST"])
+def predict_farmer_segment():
+    import math
+
+    import numpy as np
+
+    payload = request.get_json(silent=True)
+    try:
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON object with Content-Type: application/json.")
+        values = {}
+        for field in CLUSTER_INPUTS:
+            raw = payload.get(field)
+            if raw is None or raw == "":
+                raise ValueError(f"Missing required field: '{field}'.")
+            try:
+                values[field] = float(raw)
+            except (TypeError, ValueError):
+                raise ValueError(f"'{field}' must be a number, got {raw!r}.")
+            if not math.isfinite(values[field]):
+                raise ValueError(f"'{field}' must be a finite number.")
+        if values["farm_size_acres"] <= 0:
+            raise ValueError("'farm_size_acres' must be greater than 0.")
+        for field in ("annual_yield_tonnes", "income_per_acre_kes"):
+            if values[field] < 0:
+                raise ValueError(f"'{field}' cannot be negative.")
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
+
+    yield_per_acre = values["annual_yield_tonnes"] / values["farm_size_acres"]
+    input_row = pd.DataFrame([{
+        "farm_size_acres_log": np.log1p(values["farm_size_acres"]),
+        "yield_per_acre_log": np.log1p(yield_per_acre),
+        "income_per_acre_log": np.log1p(values["income_per_acre_kes"]),
+        "years_farming_experience": values["years_farming_experience"],
+        "market_access_score": values["market_access_score"],
+    }])[clustering_feature_cols]
 
     scaled_input = clustering_scaler.transform(input_row)
     assigned_cluster = int(clustering_kmeans.predict(scaled_input)[0])
