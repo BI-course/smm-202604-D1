@@ -89,8 +89,9 @@ clustering_kmeans = clustering_artifact["kmeans"]
 arm_artifact = joblib.load(
     os.path.join(MODEL_DIR, "apriori_recommendation_rules.joblib")
 )
-recommendation_lookup = arm_artifact["recommendation_lookup"]
-sku_lookup = arm_artifact["sku_lookup"]
+recommendation_lookup = arm_artifact["recommendation_lookup"]  # {frozenset(item_ids): [(item_id, confidence, lift), ...]}
+item_lookup = arm_artifact["item_lookup"]                      # DataFrame indexed by item_id
+ITEM_NAME_TO_ID = {str(name).lower(): item_id for item_id, name in item_lookup["item_name"].items()}
 
 print("All the four artifacts have been loaded. The API is ready.")
 
@@ -213,52 +214,74 @@ def predict_customer_segment():
         "model": "K-Means (k=5, standardized features)",
     })
 
-
-# 4. ASSOCIATION RULE MINING -- recommend products for a shopping cart
-
+# 4. ASSOCIATION RULE MINING -- recommend menu items for a cart
+#
 # Sample request (cURL):
-#   curl -X POST http://127.0.0.1:5000/api/v1/models/ecommerce-recommender/predictions \
+#   curl -X POST http://127.0.0.1:5000/api/v1/models/menu-recommender/predictions \
 #        -H "Content-Type: application/json" \
-#        -d '{"cart": ["H06", "H07"]}'
+#        -d '{"cart": ["Chicken Biryani", "Raita"]}'
 #
-#   curl -X POST http://127.0.0.1:5000/api/v1/models/ecommerce-recommender/predictions \
+#   curl -X POST http://127.0.0.1:5000/api/v1/models/menu-recommender/predictions \
 #        -H "Content-Type: application/json" \
-#        -d '{"cart": ["P04", "P01"]}'
+#        -d '{"cart": ["Pizza", "Soda"], "top_n": 2}'
 #
-# Note: there is no scikit-learn ".predict()" here -- the mined association
-# rules were precomputed into a lookup dictionary
-# (antecedent SKU-set -> ranked candidate consequents)
-# during the notebook's persistence stage. This
-# endpoint performs the exact same lookup+rank step a production recommender
-# microservice would perform on every incoming request; it does not mine
-# for the rules again.
-@app.route("/api/v1/models/ecommerce-recommender/predictions", methods=["POST"])
-def recommend_products():
-    payload = request.get_json()
-    cart = set(payload.get("cart", []))
-    top_n = int(payload.get("top_n", 3))
+# Note: there is no .predict() here. The mined rules were turned into a lookup
+# dictionary (antecedent item set -> ranked consequents) in the notebook. This
+# route only looks up and ranks. It never mines the rules again.
+def _resolve_item(raw):
+    """Accept an item id such as 'F10' or an item name such as 'Chicken Biryani'."""
+    text = str(raw).strip()
+    if text.upper() in item_lookup.index:
+        return text.upper()
+    if text.lower() in ITEM_NAME_TO_ID:
+        return ITEM_NAME_TO_ID[text.lower()]
+    raise ValueError(f"Unknown menu item: {raw!r}. See GET /api/v1/menu-items.")
+
+
+@app.route("/api/v1/menu-items", methods=["GET"])
+def menu_items():
+    table = item_lookup.reset_index()[["item_id", "item_name", "category", "price_kes"]]
+    return jsonify(table.sort_values("item_id").to_dict(orient="records"))
+
+
+@app.route("/api/v1/models/menu-recommender/predictions", methods=["POST"])
+def recommend_menu_items():
+    payload = request.get_json(silent=True)
+    try:
+        if not isinstance(payload, dict):
+            raise ValueError("Send a JSON object with Content-Type: application/json.")
+        raw_cart = payload.get("cart")
+        if not isinstance(raw_cart, list) or not raw_cart:
+            raise ValueError("Provide a non-empty list under 'cart' (item ids or names).")
+        try:
+            top_n = int(payload.get("top_n", 3))
+        except (TypeError, ValueError):
+            raise ValueError("'top_n' must be a whole number.")
+        cart = {_resolve_item(item) for item in raw_cart}
+    except ValueError as error:
+        return jsonify({"error": str(error)}), 400
 
     candidates = {}
     for antecedent, consequent_list in recommendation_lookup.items():
         if antecedent.issubset(cart):
-            for sku, confidence, lift in consequent_list:
-                if sku not in cart:
-                    if sku not in candidates or confidence > candidates[sku][0]:
-                        candidates[sku] = (confidence, lift)
+            for item_id, confidence, lift in consequent_list:
+                if item_id not in cart:
+                    if item_id not in candidates or confidence > candidates[item_id][0]:
+                        candidates[item_id] = (confidence, lift)
 
     ranked = sorted(candidates.items(), key=lambda item: item[1][0], reverse=True)[:top_n]
     recommendations = [
         {
-            "sku": str(sku),
-            "product_name": sku_lookup.loc[sku, "product_name"],
+            "item_id": str(item_id),
+            "item_name": item_lookup.loc[item_id, "item_name"],
             "confidence": round(float(confidence), 3),
             "lift": round(float(lift), 2),
         }
-        for sku, (confidence, lift) in ranked
+        for item_id, (confidence, lift) in ranked
     ]
 
     return jsonify({
-        "cart": sorted(cart),
+        "cart": sorted(item_lookup.loc[item_id, "item_name"] for item_id in cart),
         "recommendations": recommendations,
         "model": "Apriori association rules, cleaned + precomputed lookup",
     })
