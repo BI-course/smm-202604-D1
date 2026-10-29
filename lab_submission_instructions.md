@@ -6,47 +6,32 @@
 
 **Member 1:**
 
-| **Details**                                                                                                                           | **Comment** |
-|:--------------------------------------------------------------------------------------------------------------------------------------|:------------|
-| **Student ID**                                                                                                                        |             |
-| **Name**                                                                                                                              |             |
-| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** |             |
+| **Details**                                                                                                                           | **Comment**       |
+|:--------------------------------------------------------------------------------------------------------------------------------------|:------------------|
+| **Student ID**                                                                                                                        | **161749**        |
+| **Name**                                                                                                                              | **Maddox Kibati** |
+| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** | **Clustering endpoint, Docker, Nginx, Render, video, and integration. Built the farmer-segmenter endpoint and the k-Means artifact (PR #1: https://github.com/BI-course/smm-202604-D1/pull/1), ran the API in Docker with Gunicorn behind an Nginx reverse proxy over HTTPS, deployed the unmodified `api.py` to Render, and recorded the demonstration video. When the Docker image crashed on start-up, I read the container logs, traced it to model files saved with an older scikit-learn and with pandas 3 Arrow-backed strings, fixed the notebook, and re-saved the regression, classification and recommender model files under the course library versions (PR #4). I also completed this submission file. Branches: https://github.com/BI-course/smm-202604-D1/tree/feature/lab-smm/clustering-endpoint , https://github.com/BI-course/smm-202604-D1/tree/feature/lab-smm/resave-models and https://github.com/BI-course/smm-202604-D1/tree/feature/lab-smm/docker-nginx-render . Learned: models must be saved with the same library versions that serve them, or the container crashes at start-up, and that Gunicorn behind Nginx is what lets the same code serve real traffic instead of the Flask development server.**              |
 
 **Member 2:**
 
-| **Details**                                                                                                                           | **Comment** |
-|:--------------------------------------------------------------------------------------------------------------------------------------|:------------|
-| **Student ID**                                                                                                                        |             |
-| **Name**                                                                                                                              |             |
-| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** |             |
+| **Details**                                                                                                                           | **Comment**        |
+|:--------------------------------------------------------------------------------------------------------------------------------------|:-------------------|
+| **Student ID**                                                                                                                        | **155578**         |
+| **Name**                                                                                                                              | **Justus Kamande** |
+| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** | **Regression and classification endpoints. Added the farm-income-regressor and invoice-risk-classifier endpoints to `api.py` with input validation, replacing the SME sample models with the group's models (PR #3: https://github.com/BI-course/smm-202604-D1/pull/3). Both endpoints return correct predictions locally, in Docker behind Nginx, and on Render. The saved model files were later re-saved by Maddox under the course library versions after they failed to load in the Docker image (branch resave-models, PR #4). Branch: https://github.com/BI-course/smm-202604-D1/tree/feature/lab-smm/regression-classification . Learned: a saved pipeline carries its own imputer, encoder and scaler, so the endpoint only validates the JSON and calls predict, and because the target was log-transformed the output must be converted back with expm1.**               |
 
 **Member 3:**
 
-| **Details**                                                                                                                           | **Comment** |
-|:--------------------------------------------------------------------------------------------------------------------------------------|:------------|
-| **Student ID**                                                                                                                        |             |
-| **Name**                                                                                                                              |             |
-| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** |             |
+| **Details**                                                                                                                           | **Comment**         |
+|:--------------------------------------------------------------------------------------------------------------------------------------|:--------------------|
+| **Student ID**                                                                                                                        | **151115**          |
+| **Name**                                                                                                                              | **Tyrone Odhiambo** |
+| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** | **Recommender endpoint. Added the menu-recommender and menu-items endpoints to `api.py`, replacing the sample ecommerce recommender with the group's association rules lookup (PR #2: https://github.com/BI-course/smm-202604-D1/pull/2). The endpoint accepts item ids or names and returns a clear 400 error for an empty cart or an unknown item. The rules file was later re-saved by Maddox without Arrow-backed strings after it failed to load in the Docker image (branch resave-models, PR #4). Branch: https://github.com/BI-course/smm-202604-D1/tree/feature/lab-smm/recommender-endpoint . Learned: a recommender needs no predict call because the mined rules become a lookup table, and a recommendation only appears when the cart contains a full rule antecedent**                |
 
-**Member 4:**
-
-| **Details**                                                                                                                           | **Comment** |
-|:--------------------------------------------------------------------------------------------------------------------------------------|:------------|
-| **Student ID**                                                                                                                        |             |
-| **Name**                                                                                                                              |             |
-| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** |             |
-
-**Member 5:**
-
-| **Details**                                                                                                                           | **Comment** |
-|:--------------------------------------------------------------------------------------------------------------------------------------|:------------|
-| **Student ID**                                                                                                                        |             |
-| **Name**                                                                                                                              |             |
-| **What part of the lab did you personally<br/>contribute to (provide a link to the<br/>branch(es)), and what did you learn from it?** |             |
 
 ## Chosen Level of Difficulty
 
-**Specify the chosen level of difficulty** (baseline, intermediate, or advanced):
+**Specify the chosen level of difficulty** (baseline, intermediate, or advanced): **Intermediate**
 
 ## Video Demonstration
 
@@ -62,7 +47,7 @@ At minimum, the video must show, in one continuous walkthrough:
 
 Note that you are required to submit the link to the video and NOT the video itself. The video should NOT be uploaded to your repository—that would be a misuse of GitHub.
 
-**Link to the video:**
+**Link to the video:** **https://drive.google.com/file/d/10ehY-icFie3dpVTgCk7u4BzIB1l8-nCm/view?usp=sharing**
 
 ## Public URLs
 
@@ -70,7 +55,7 @@ Fill in only the rows that apply to your chosen difficulty level (see Part C bel
 
 | **Deployment target**                             | **URL** |
 |:--------------------------------------------------|:--------|
-| Render (the full `api.py`, all endpoints)         |         |
+| Render (the full `api.py`, all endpoints)         | **https://smm-202604-d1.onrender.com**    |
 | Hugging Face Space (Gradio, one tab per model)    |         |
 | Streamlit Community Cloud app (one tab per model) |         |
 
